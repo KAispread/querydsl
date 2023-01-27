@@ -1,6 +1,10 @@
 package study.querydsl;
 
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.dsl.CaseBuilder;
+import com.querydsl.core.types.dsl.Expressions;
+import com.querydsl.core.types.dsl.NumberExpression;
+import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +19,8 @@ import study.querydsl.entity.QTeam;
 import study.querydsl.entity.Team;
 
 import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
+import javax.persistence.PersistenceUnit;
 
 import java.util.List;
 
@@ -284,6 +290,200 @@ public class QuerydslBasicTest {
 
         for (Tuple tuple : result) {
             System.out.println("tuple = " + tuple);
+        }
+    }
+
+    @PersistenceUnit
+    EntityManagerFactory emf;
+
+    // 페치조인 사용 X
+    @Test
+    void fetchJoinNO() {
+        em.flush();
+        em.clear();
+
+        Member findMember = queryFactory
+                .selectFrom(member)
+                .where(member.username.eq("member1"))
+                .fetchOne();
+        // 로딩이 된 Entity 인지 판별
+        boolean loaded = emf.getPersistenceUnitUtil().isLoaded(findMember.getTeam());
+        assertThat(loaded).as("페치조인 미적용").isFalse();
+    }
+
+    // 페치 조인 O
+    @Test
+    void fetchJoinUse() {
+        em.flush();
+        em.clear();
+
+        Member findMember = queryFactory
+                .selectFrom(member)
+                // Join 절 뒤에 fetchJoin() 메서드 사용
+                .join(member.team).fetchJoin()
+                .where(member.username.eq("member1"))
+                .fetchOne();
+
+        // 로딩이 된 Entity 인지 판별
+        boolean loaded = emf.getPersistenceUnitUtil().isLoaded(findMember.getTeam());
+        assertThat(loaded).as("페치조인 미적용").isTrue();
+    }
+
+    /*
+    * 서브 쿼리
+    *
+    * 나이가 가장 많은 회원 조회
+    * 나이가 평균인 회원 조회
+    * */
+    @Test
+    void subQuery() {
+        QMember memberSub = new QMember("memberSub");
+
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                .where(member.age.eq(
+                        JPAExpressions
+                                .select(memberSub.age.max())
+                                .from(memberSub)
+                ))
+                .fetch();
+
+        assertThat(result)
+                .extracting("age")
+                .containsExactly(40);
+
+
+        QMember members = new QMember("members");
+        List<Member> result2 = queryFactory
+                .selectFrom(member)
+                .where(member.age.goe(
+                        JPAExpressions
+                                .select(members.age.avg())
+                                .from(members)
+                ))
+                .fetch();
+
+        assertThat(result2)
+                .extracting("age")
+                .containsExactly(30, 40);
+    }
+
+    @Test
+    void subQueryIn() {
+        QMember members = new QMember("members");
+
+        List<Member> result2 = queryFactory
+                .selectFrom(member)
+                .where(member.age.goe(
+                        JPAExpressions
+                                .select(members.age.avg())
+                                .from(members)
+                                // in 절
+                                .where(members.age.gt(10))
+                ))
+                .fetch();
+
+        assertThat(result2)
+                .extracting("age")
+                .containsExactly(20, 30, 40);
+    }
+
+    @Test
+    void selectSubQuery() {
+        QMember memberSub = new QMember("memberSub");
+
+        List<Tuple> result = queryFactory
+                .select(member.username,
+                        JPAExpressions
+                                .select(memberSub.age.avg())
+                                .from(memberSub))
+                .from(member)
+                .fetch();
+
+        for (Tuple tuple : result) {
+            System.out.println("tuple = " + tuple);
+        }
+    }
+
+    /*
+    * Case 문
+    * */
+    @Test
+    void basicCase() {
+        List<String> result = queryFactory
+                .select(member.age
+                        .when(10).then("열살")
+                        .when(20).then("스무살")
+                        .otherwise("기타"))
+                .from(member)
+                .fetch();
+
+        for (String s : result) {
+            System.out.println("s = " + s);
+        }
+    }
+
+    @Test
+    void complexCase() {
+        List<String> result = queryFactory
+                .select(new CaseBuilder()
+                        .when(member.age.between(0, 20)).then("0~20살")
+                        .when(member.age.between(21, 30)).then("21~30살")
+                        .otherwise("기타"))
+                .from(member)
+                .fetch();
+
+        for (String s : result) {
+            System.out.println("s = " + s);
+        }
+    }
+
+    /*
+    * orderBy 에 Case 사용
+    * */
+    @Test
+    void orderByCase() {
+        NumberExpression<Integer> rank = new CaseBuilder()
+                .when(member.age.between(0, 20)).then(1)
+                .when(member.age.between(21, 30)).then(2)
+                .otherwise(3);
+
+        List<Member> result = queryFactory
+                .select(member)
+                .from(member)
+                .orderBy(rank.desc())
+                .fetch();
+
+        for (Member s : result) {
+            System.out.println("s = " + s);
+        }
+    }
+
+    // 상수 추가
+    @Test
+    void constant() {
+        List<Tuple> result = queryFactory
+                // 상수
+                .select(member.username, Expressions.constant("A"))
+                .from(member)
+                .fetch();
+
+        for (Tuple tuple : result) {
+            System.out.println("tuple = " + tuple);
+        }
+    }
+
+    // 상수 더하기
+    @Test
+    void concat() {
+        List<String> result = queryFactory
+                .select(member.username.concat("_").concat(member.age.stringValue()))
+                .from(member)
+                .where(member.username.eq("member1"))
+                .fetch();
+
+        for (String s : result) {
+            System.out.println("s = " + s);
         }
     }
 }
