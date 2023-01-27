@@ -1,10 +1,13 @@
 package study.querydsl;
 
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.ExpressionUtils;
+import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.CaseBuilder;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.core.types.dsl.NumberExpression;
 import com.querydsl.jpa.JPAExpressions;
+import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
+import study.querydsl.dto.MemberDto;
+import study.querydsl.dto.UserDto;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.QMember;
 import study.querydsl.entity.QTeam;
@@ -485,5 +490,94 @@ public class QuerydslBasicTest {
         for (String s : result) {
             System.out.println("s = " + s);
         }
+    }
+
+    /*
+    * 프로젝션 : select 절에 조회할 대상 지정
+    * */
+    @Test
+    void simpleProjection() {
+        // 프로젝션 대상이 하나
+        List<String> result = queryFactory
+                .select(member.username)
+                .from(member)
+                .fetch();
+
+        for (String s : result) {
+            System.out.println("s = " + s);
+        }
+
+        // 프로젝션 대상이 여러개
+        // Repository 단에서 처리하도록 하는 것이 좋음 -> Service가 모르게
+        List<Tuple> tuple = queryFactory
+                .select(member.username, member.age)
+                .from(member)
+                .fetch();
+
+        for (Tuple t : tuple) {
+            String username = t.get(member.username);
+            Integer age = t.get(member.age);
+
+            System.out.println("username = " + username);
+            System.out.println("age = " + age);
+        }
+    }
+
+    /*
+    * 프로젝션 Dto
+    * */
+    @Test
+    void findDtoByJPQL() {
+        List<MemberDto> jpqlResult = em.createQuery("select new study.querydsl.dto.MemberDto(m.username, m.age) from Member m", MemberDto.class)
+                .getResultList();
+
+        for (MemberDto memberDto : jpqlResult) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    @Test
+    void findDtoByQueryDsl() {
+        // Setter 주입 - Projections.bean
+        // 기본 생성자 & setter 필수
+        queryFactory
+                .select(Projections.bean(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        // 필드 주입 - Projections.fields
+        queryFactory
+                .select(Projections.fields(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        // 필드명이 다를 때 [필드주입 & setter]
+        //
+        QMember memberSub = new QMember("memberSub");
+        queryFactory
+                .select(Projections.constructor(UserDto.class,
+                        member.username.as("name"),
+                        ExpressionUtils.as(
+                                // 서브쿼리를 날려, member 의 최대 나이를 age 에 매칭
+                                // age -> UserDto.age
+                                JPAExpressions
+                                        .select(memberSub.age.max())
+                                        .from(memberSub), "age"
+                        )))
+                .from(member)
+                .fetch();
+
+        // 생성자 주입 - Projections.constructor
+        // Entity 필드와 Dto 필드의 타입이 맞아야 함
+        queryFactory
+                .select(Projections.constructor(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
     }
 }
