@@ -1,32 +1,33 @@
 package study.querydsl;
 
+import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.ExpressionUtils;
 import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.core.types.dsl.CaseBuilder;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.core.types.dsl.NumberExpression;
 import com.querydsl.jpa.JPAExpressions;
-import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
-import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.test.annotation.Rollback;
 import org.springframework.transaction.annotation.Transactional;
 import study.querydsl.dto.MemberDto;
+import study.querydsl.dto.QMemberDto;
 import study.querydsl.dto.UserDto;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.QMember;
-import study.querydsl.entity.QTeam;
 import study.querydsl.entity.Team;
 
 import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
 import javax.persistence.PersistenceUnit;
-
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -580,4 +581,166 @@ public class QuerydslBasicTest {
                 .from(member)
                 .fetch();
     }
+
+    /*
+    * @QueryProjection
+    * */
+    @Test
+    void findDtoByQueryProjection() {
+        List<MemberDto> result = queryFactory
+                .select(new QMemberDto(member.username, member.age))
+                .from(member)
+                .fetch();
+
+        for (MemberDto memberDto : result) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    /*
+    * 동적 쿼리
+    * */
+    @Test
+    void dynamicQuery_BooleanBuilder() {
+        String usernameParam = "member1";
+        Integer ageParam = 10;
+
+        List<Member> result = searchMember1(usernameParam, ageParam);
+        for (Member member1 : result) {
+            System.out.println("member1 = " + member1);
+        }
+        assertThat(result.size()).isEqualTo(1);
+    }
+
+    // 파라미터가 null 이면 검색 조건에 추가하지 않음
+    // BooleanBuilder
+    private List<Member> searchMember1(String usernameParam, Integer ageParam) {
+        BooleanBuilder builder = new BooleanBuilder();
+
+        if (usernameParam != null) {
+            builder.and(member.username.eq(usernameParam));
+        }
+
+        if (ageParam != null) {
+            builder.and(member.age.eq(ageParam));
+        }
+
+        return queryFactory
+                .selectFrom(member)
+                .where(builder)
+                .fetch();
+    }
+
+    /*
+    * 동적쿼리 - where 다중 파라미터 사용
+    * */
+    @Test
+    void dynamicQuery_WhereParam() {
+        String usernameParam = "member1";
+        Integer ageParam = 10;
+
+        List<Member> result = searchMember2(null, ageParam);
+        for (Member member1 : result) {
+            System.out.println("member1 = " + member1);
+        }
+        assertThat(result.size()).isEqualTo(1);
+    }
+
+    /*
+    * where 조건에 null 이 있다면 무시
+    * */
+    private List<Member> searchMember2(String usernameParam, Integer ageParam) {
+        return queryFactory
+                .selectFrom(member)
+                // 조건문을 메서드로 분리
+//                .where(usernameEq(usernameParam), ageEq(ageParam))
+                // 조건을 조립 가능
+                .where(allEq(usernameParam, ageParam))
+                .fetch();
+    }
+
+    // 메서드를 분리해놓으면 다른 쿼리에서 재사용 가능
+    private BooleanExpression ageEq(Integer ageParam) {
+        return ageParam != null ? member.age.eq(ageParam) : null;
+    }
+
+    private BooleanExpression usernameEq(String usernameParam) {
+        return usernameParam != null ? member.username.eq(usernameParam) : null;
+    }
+
+    private BooleanBuilder allEq(String usernameParam, Integer ageParam) {
+        BooleanBuilder builder = new BooleanBuilder();
+        return builder.and(usernameEq(usernameParam)).and(ageEq(ageParam));
+    }
+
+    /*
+    * 수정, 벌크 연산
+    * */
+    @Test
+    @Rollback(value = false)
+    void bulkUpdate() {
+        // 벌크 연산은 영속성 컨텍스트를 무시하고 실행
+        // DB와 영속성 컨텍스트의 값이 다른 문제 발생
+
+        long count = queryFactory
+                .update(member)
+                .set(member.username, "비회원")
+                .where(member.age.lt(28))
+                .execute();
+
+        em.flush();
+        em.clear();
+    }
+
+    // 벌크 수정
+    @Test
+    void bulkAdd() {
+        // 더하기
+        long count = queryFactory
+                .update(member)
+                .set(member.age, member.age.add(1))
+                .execute();
+
+        // 곱하기
+        long execute = queryFactory
+                .update(member)
+                .set(member.age, member.age.multiply(3))
+                .execute();
+    }
+
+    @Test
+    void bulkDelete() {
+        long count = queryFactory
+                .delete(member)
+                .where(member.age.gt(30))
+                .execute();
+    }
+
+    /*
+    * SQL function 사용
+    * Dialect 를 상속받아 사용자 정의 function 생성 가능
+    * */
+    @Test
+    void sqlFunction() {
+        List<String> result = queryFactory
+                .select(
+                        Expressions.stringTemplate("function('replace', {0}, {1}, {2})",
+                                member.username, "member", "M"))
+                .from(member)
+                .fetch();
+    }
+
+    @Test
+    void sqlFunction2() {
+        List<String> result = queryFactory
+                .select(member.username)
+                .from(member)
+//                .where(member.username.eq(
+//                        Expressions.stringTemplate("function('lower', {0})",
+//                                member.username)
+//                ))
+                .where(member.username.eq(member.username.lower()))
+                .fetch();
+    }
 }
+
