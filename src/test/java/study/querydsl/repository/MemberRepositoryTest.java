@@ -10,12 +10,14 @@ import org.springframework.transaction.annotation.Transactional;
 import study.querydsl.dto.MemberSearchCondition;
 import study.querydsl.dto.MemberTeamDto;
 import study.querydsl.entity.Member;
+import study.querydsl.entity.QMember;
 import study.querydsl.entity.Team;
 
 import javax.persistence.EntityManager;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static study.querydsl.entity.QMember.member;
 
 @Transactional
 @SpringBootTest
@@ -88,5 +90,13 @@ class MemberRepositoryTest {
         assertThat(result.getSize()).isEqualTo(3);
         assertThat(result.getContent()).extracting("username")
                 .containsExactly("member1", "member2", "member3");
+    }
+
+    @Test
+    void querydslPredicateExecutor() {
+        Iterable<Member> result = memberRepository.findAll(member.age.between(10, 40).and(member.username.eq("member1")));
+        for (Member findMember : result) {
+            System.out.println("findMember = " + findMember);
+        }
     }
 }
